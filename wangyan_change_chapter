@@ -45,7 +45,9 @@ func main() {
 	go func(wg *sync.WaitGroup) {
 			//真正干事的
 		for i := 1;i < concurrenc+1 ;i++  {
-
+			if i<= 20 {
+				continue
+			}
 			db, err := sql.Open("mysql", "root:gaopeng@tcp(122.155.164.6:3306)/web3")
 			checkerr(err)
 			rowsnumber := getrowsnum(i,db)
@@ -104,7 +106,9 @@ func changechapter(n int64,i int,dbcon *sql.DB) error {
 }
 
 func addtag(c *chapter)  {
+	//c.Content = strings.Replace(c.Content,"<br>", "", -1)
 	c.Content = strings.Replace(c.Content,"&nbsp&nbsp&nbsp&nbsp", "<br><br>&nbsp&nbsp&nbsp&nbsp", -1)
 	c.Content = strings.Replace(c.Content,"<br><br>&nbsp&nbsp&nbsp&nbsp", "&nbsp&nbsp&nbsp&nbsp", 1)
 }
+
 //set global max_prepared_stmt_count=100000;
