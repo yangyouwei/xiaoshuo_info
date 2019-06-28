@@ -1,0 +1,110 @@
+package main
+
+import (
+	"database/sql"
+	"errors"
+	"flag"
+	"fmt"
+	_ "github.com/go-sql-driver/mysql"
+	"strconv"
+	"strings"
+	"sync"
+)
+
+type chapter struct {
+	Id int64	`db:"id"`
+	Content string `db:"content"`
+}
+
+func checkerr(err error) {
+	if err != nil {
+		fmt.Println(err)
+		panic(err)
+	}
+}
+
+var concurrenc int
+var err error
+func main() {
+	arg := flag.String("n","","-n number(int)")
+	flag.Parse()
+
+	if *arg == "" {
+		flag.Usage()
+		panic("process exsit!")
+	}
+
+	concurrenc,err =  strconv.Atoi(*arg)
+	if err != nil {
+		flag.Usage()
+		panic("process exsit!")
+	}
+
+	wg := sync.WaitGroup{}
+	wg.Add(1)
+	go func(wg *sync.WaitGroup) {
+			//真正干事的
+		for i := 1;i < concurrenc+1 ;i++  {
+
+			db, err := sql.Open("mysql", "root:gaopeng@tcp(122.155.164.6:3306)/web3")
+			checkerr(err)
+			rowsnumber := getrowsnum(i,db)
+			var n int64
+			for n = 1; n < rowsnumber+1 ; n++  {
+				err = changechapter(n,i,db)
+				if err != nil {
+					fmt.Println(err)
+					continue
+				}
+			}
+		}
+		wg.Done()
+	}(&wg)
+	wg.Wait()
+}
+
+func getrowsnum(i int,db *sql.DB) (lastnumber int64)  {
+	//select * from table order by id DESC limit 1
+	sqlid := fmt.Sprintf("select id from chapter_%v order by id DESC limit 1",i)
+	err := db.QueryRow(sqlid).Scan(&lastnumber)
+	checkerr(err)
+	return lastnumber
+}
+
+func changechapter(n int64,i int,dbcon *sql.DB) error {
+	c := chapter{}
+	c.Id = n
+	var err error
+	//查询章节内容
+	sqlid := fmt.Sprintf("SELECT content FROM chapter_%v WHERE id = ?",i)
+	//"SELECT id FROM bookinfo WHERE bookname = ?"
+	err = dbcon.QueryRow(sqlid, n).Scan(&c.Content)
+	if err != nil {
+		return err
+	}
+	//修改章节内容
+	if c.Content == "" {
+		err = errors.New("content is nil")
+		return err
+	}
+	addtag(&c)
+	//fmt.Println(c.Content)
+	//update章节内容
+	sqlupdate := fmt.Sprintf("UPDATE chapter_%v set content=? WHERE id=?",i)
+	stmt, err := dbcon.Prepare(sqlupdate)
+	_, err = stmt.Exec(c.Content,n)
+
+	if err != nil {
+		return err
+	}
+
+	rs := fmt.Sprintf("chapter_%v  章节id： %v is done",i,n)
+	fmt.Println(rs)
+	return nil
+}
+
+func addtag(c *chapter)  {
+	c.Content = strings.Replace(c.Content,"&nbsp&nbsp&nbsp&nbsp", "<br><br>&nbsp&nbsp&nbsp&nbsp", -1)
+	c.Content = strings.Replace(c.Content,"<br><br>&nbsp&nbsp&nbsp&nbsp", "&nbsp&nbsp&nbsp&nbsp", 1)
+}
+//set global max_prepared_stmt_count=100000;
