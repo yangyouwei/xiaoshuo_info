@@ -95,6 +95,7 @@ func changechapter(n int64,i int,dbcon *sql.DB) error {
 	sqlupdate := fmt.Sprintf("UPDATE chapter_%v set content=? WHERE id=?",i)
 	stmt, err := dbcon.Prepare(sqlupdate)
 	_, err = stmt.Exec(c.Content,n)
+	defer stmt.Close() 
 
 	if err != nil {
 		return err
