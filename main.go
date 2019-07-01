@@ -14,6 +14,9 @@ import (
 	"sync"
 )
 
+var db *sql.DB
+var err error
+
 //并发
 var concurrenc int
 var filenamech = make(chan string, 10)
@@ -22,12 +25,17 @@ var bookstorepath = "/data/zip/books/"
 //book信息
 type Bookinfo struct {
 	Bookid          int64  `db:"id"`
-	Bookname        string `db:"bookname"`
-	Boookauthor     string `db:"boookauthor"`
-	Bookcahtpernum  int    `db:"bookcahtpernum"`
-	Bookcomment     string `db:"bookcomment"`
+	Bookname        string `db:"booksName"`
+	Boookauthor     string `db:"author"`
+	Bookcahtpernum  int    `db:"chapters"`
+	Bookcomment     string `db:"summary"`
 	Bookstorepath   string `db:"bookstorepath"`
 	Sourcesfilename string `db:"sourcesfilename"`
+}
+
+func init()  {
+	db, err = sql.Open("mysql", "root:gaopeng@tcp(122.155.164.7:3306)/web4")
+	check(err)
 }
 
 func main() {
@@ -83,7 +91,7 @@ func GetAllFile(pathname string, fn_ch chan string) {
 func dosomewrork(fp string) {
 	b := Bookinfo{}
 	b.getinfo(fp)
-	b.insert()
+	b.insert(db)
 }
 
 func (b *Bookinfo) getinfo(fp string) {
@@ -101,11 +109,8 @@ func (b *Bookinfo) getinfo(fp string) {
 }
 
 //book信息写入数据库
-func (b *Bookinfo) insert() {
-	db, err := sql.Open("mysql", "root:gaopeng@tcp(192.168.2.250:3306)/books")
-	check(err)
-
-	stmt, err := db.Prepare(`INSERT bookinfo ( bookname, boookauthor, bookcahtpernum,bookcomment,bookstorepath,sourcesfilename) VALUES (?,?,?,?,?,?)`)
+func (b *Bookinfo) insert(db *sql.DB) {
+	stmt, err := db.Prepare(`INSERT books_qishu ( booksName, author, chapters,summary,bookstorepath,sourcesfilename) VALUES (?,?,?,?,?,?)`)
 	check(err)
 
 	res, err := stmt.Exec(b.Bookname, b.Boookauthor, b.Bookcahtpernum, b.Bookcomment, b.Bookstorepath, b.Sourcesfilename)
@@ -113,13 +118,15 @@ func (b *Bookinfo) insert() {
 
 	id, err := res.LastInsertId() //必须是自增id的才可以正确返回。
 	check(err)
+	defer stmt.Close()
+
 	idstr := fmt.Sprintf("%v", id)
 	err = os.Mkdir(bookstorepath+idstr, os.ModePerm)
 	if err != nil {
 		fmt.Println(err)
 	}
 
-	stmt, err = db.Prepare("UPDATE bookinfo set bookstorepath=? WHERE id=?")
+	stmt, err = db.Prepare("UPDATE books_qishu set bookstorepath=? WHERE id=?")
 	check(err)
 
 	res, err = stmt.Exec(bookstorepath+idstr, id)
@@ -127,6 +134,7 @@ func (b *Bookinfo) insert() {
 
 	_, err = res.RowsAffected() //返回值是1 修改成功，如果是零则是不成功（修改值和原来的值一样，mysql实际没有修改，或者没有这条记录）
 	check(err)
+	defer stmt.Close()
 
 	fmt.Println(idstr)
 	stmt.Close()
@@ -182,7 +190,7 @@ func getname(s string) string {
 	if isok {
 		reg := regexp.MustCompile("(.*)(著)(\\s*)") //分组，第一个分组是全部匹配的结果，第二个是括号里的。
 		result := reg.FindAllStringSubmatch(s, -1) //使用for循环然后取切片的下标，或者使用result1[0][1]直接取出
-		a := result[0][1]
+		a := result[0][0]
 		return a
 	}
 	return ""
