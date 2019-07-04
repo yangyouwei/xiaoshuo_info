@@ -3,32 +3,36 @@ package main
 import (
 	"bufio"
 	"database/sql"
-	_ "github.com/go-sql-driver/mysql"
 	"fmt"
+	_ "github.com/go-sql-driver/mysql"
 	"io"
 	"io/ioutil"
 	"os"
 	"path/filepath"
 	"regexp"
+	"strconv"
 	"strings"
 	"sync"
 )
 
 //book信息
 type Bookinfo struct {
-	Bookname        string `db:"bookname"`
-	Boookauthor     string `db:"boookauthor"`
-	Bookcahtpernum  int    `db:"bookcahtpernum"`
-	Bookcomment     string `db:"bookcomment"`
-	Bookstorepath   string `db:"bookstorepath"`
+	Bookid         int    `db:"id"`
+	Bookname       string `db:"booksName"`
+	Boookauthor    string `db:"author"`
+	Bookcahtpernum int    `db:"chapters"`
+	Bookcomment    string `db:"summary"`
+	chapterdone    int    `db:"chapterdone"`
+	//Bookstorepath   string `db:"bookstorepath"`
 }
+
 //章节信息
 type chapterinfo struct {
-	Bookid	int `db:"bookid"`
-	Chapterid int `db:"chapterid"`
-	Chaptername string `db:"chaptername"`
-	Chapter string `db:"chapter"`
-	Storepath string `db:"storepath"`
+	Bookid      int    `db:"booksId"`
+	Chapterid   int    `db:"chapterId"`
+	Chaptername string `db:"chapterName"`
+	Chapter     string `db:"content"`
+	//Storepath string `db:"storepath"`
 	Chapterlines int64 `db:"chapterlines"`
 }
 
@@ -39,12 +43,11 @@ var filenamech = make(chan string, 100)
 var dbcon *sql.DB
 
 //初始化mysql连接池
-func init()  {
-	db, err := sql.Open("mysql", "root:gaopeng@tcp(192.168.2.250:3306)/books")
+func init() {
+	db, err := sql.Open("mysql", "root:gaopeng@tcp(192.168.2.250:3306)/web3")
 	dbcon = db
 	check(err)
 }
-
 
 func main() {
 	//获取绝对路径
@@ -54,7 +57,7 @@ func main() {
 		return
 	}
 	//并发数量
-	concurrenc := 5
+	concurrenc := 20
 
 	wg := sync.WaitGroup{} //控制主程序等待，以便goroutines运行完
 	wg.Add(concurrenc + 1)
@@ -67,9 +70,9 @@ func main() {
 	//for循环开启并发的go程
 	for i := 0; i < concurrenc; i++ {
 		go func(wg *sync.WaitGroup, filenamech chan string) {
-			for {	//for不断重chan中取文件路径
-				filename, isclose := <-filenamech   //判断chan是否关闭，关闭了就退出循环不在取文件名结束程序
-				if !isclose { //判断通道是否关闭，关闭则退出循环
+			for { //for不断重chan中取文件路径
+				filename, isclose := <-filenamech //判断chan是否关闭，关闭了就退出循环不在取文件名结束程序
+				if !isclose {                     //判断通道是否关闭，关闭则退出循环
 					break
 				}
 				//真正干事的
@@ -81,8 +84,7 @@ func main() {
 	wg.Wait()
 }
 
-
-func dosomewrork(fp string)  {
+func dosomewrork(fp string) {
 	//读取文本
 	fi, err := os.Open(fp)
 	if err != nil {
@@ -91,8 +93,10 @@ func dosomewrork(fp string)  {
 	defer fi.Close()
 
 	br := bufio.NewReader(fi)
-	var lines int64  //文本的行数
-	var chapternum int	//找到章节数，作为章节id
+	var lines int64    //文本的行数
+	var chapternum int //找到章节数，作为章节id
+	var pre_chaptername string
+	booksrt := Bookinfo{}
 	for {
 		a, _, c := br.ReadLine()
 		if c == io.EOF {
@@ -100,72 +104,248 @@ func dosomewrork(fp string)  {
 		}
 		lines++
 		//获取一个chapter结构实例，并存入数据库
-		res := getchapterinfo(string(a),fp,lines)
+		res := getchapterinfo(string(a), fp, lines)
+		//去重匹配规则
 		if res.Chaptername != "" && res.Bookid != 0 {
+			//去重
+			if quchong(pre_chaptername) == quchong(res.Chaptername) {
+				continue
+			}
+			//匹配章节规则
+			preisok, err := regexp.Match("^\\s*第.{1,9}章.*", []byte(pre_chaptername))
+			if err != nil {
+				fmt.Println(err)
+			}
+			nowisok, err := regexp.Match("^\\s*第.{1,9}章.*", []byte(res.Chaptername))
+			if err != nil {
+				fmt.Println(err)
+			}
+			if preisok {
+				if preisok != nowisok {
+					continue
+				}
+			}
+
+			//匹配章节规则
+			preisok1, err := regexp.Match("^\\s*\\d+\\s*", []byte(pre_chaptername))
+			if err != nil {
+				fmt.Println(err)
+			}
+			nowisok1, err := regexp.Match("^\\s*\\d+\\s*", []byte(res.Chaptername))
+			if err != nil {
+				fmt.Println(err)
+			}
+			if preisok1 {
+				if preisok1 != nowisok1 {
+					continue
+				}
+			}
+			//
+			preisok2, err := regexp.Match("^\\s*第.{1,9}节.*", []byte(pre_chaptername))
+			if err != nil {
+				fmt.Println(err)
+			}
+			nowisok2, err := regexp.Match("^\\s*第.{1,9}节.*", []byte(res.Chaptername))
+			if err != nil {
+				fmt.Println(err)
+			}
+			if preisok2 {
+				if preisok2 != nowisok2 {
+					continue
+				}
+			}
+
+			//
+			preisok3 , err := regexp.Match("^(\\s*)(卷.*)",[]byte(pre_chaptername))
+			if err != nil {
+				fmt.Println(err)
+			}
+			nowisok3 , err := regexp.Match("^(\\s*)(卷.*)",[]byte(res.Chaptername))
+			if err != nil {
+				fmt.Println(err)
+			}
+			if preisok3 {
+				if preisok3 != nowisok3 {
+					continue
+				}
+			}
+
+			//章节id
 			chapternum++
 			res.Chapterid = chapternum
+			fmt.Println(res.Chaptername)
 			res.writetodb()
+
+			//update 状态用
+			b := &pre_chaptername
+			*b = res.Chaptername
+			booksrt.Bookid = res.Bookid
+			booksrt.Bookcahtpernum = res.Chapterid
 		}
-		continue
 	}
+
+	//更新小说章节状态
+	sqlupdate := fmt.Sprintf("UPDATE books set chapterdone=? WHERE id=?")
+	stmt, err := dbcon.Prepare(sqlupdate)
+	_, err = stmt.Exec(1, booksrt.Bookid)
+	defer stmt.Close()
+	if err != nil {
+		fmt.Println(err)
+	}
+
+	//更新book 章节数
+	sqlupdate = fmt.Sprintf("UPDATE books set chapters=? WHERE id=?")
+	stmt, err = dbcon.Prepare(sqlupdate)
+	_, err = stmt.Exec(booksrt.Bookcahtpernum, booksrt.Bookid)
+	defer stmt.Close()
+	if err != nil {
+		fmt.Println(err)
+	}
+	return
 }
 
-func getchapterinfo(s string,fp string,lines int64) *chapterinfo {
-	c := chapterinfo{}
-	c.Bookid, c.Storepath = getbookid(fp)
-	c.Chaptername = getchaptername(s)
-	c.Chapterlines = lines
-	return &c
-}
-
-func getchaptername(s string) string {
-	isok , err := regexp.Match("^(\\s*)(第)(.*)(章)(.*)|^(\\s*)(\\d)(\\s*)",[]byte(s))
+func quchong(s string) string {
+	isok , err := regexp.Match("^(\\s*)(第)(.{1,9})(章)(.*)",[]byte(s))
 	if err != nil {
 		fmt.Println(err)
 	}
 
 	if isok {
-		reg := regexp.MustCompile("^(\\s*)(第)(.*)(章)(.*)$|^(\\s*)(\\d)(\\s*)")
+		reg := regexp.MustCompile("^(\\s*)(第.{1,9}章)(.*)$")
 		result := reg.FindAllStringSubmatch(s,-1)
-		a := result[0][0]
+		a := result[0][2]
 		return a
 	}
+
+	isok , err = regexp.Match("^(\\s*)(\\d+)(\\s*)",[]byte(s))
+	if err != nil {
+		fmt.Println(err)
+	}
+
+	if isok {
+		reg := regexp.MustCompile("^(\\s*)(\\d+)(\\s*)")
+		result := reg.FindAllStringSubmatch(s,-1)
+		a := result[0][2]
+		return a
+	}
+
+	isok , err = regexp.Match("^(\\s*)(卷.*)",[]byte(s))
+	if err != nil {
+		fmt.Println(err)
+	}
+
+	if isok {
+		reg := regexp.MustCompile("^(\\s*)(卷.*)$")
+		result := reg.FindAllStringSubmatch(s,-1)
+		a := result[0][2]
+		return a
+	}
+
+	isok , err = regexp.Match("^(\\s*)(第.{1,9}节)",[]byte(s))
+	if err != nil {
+		fmt.Println(err)
+	}
+
+	if isok {
+		reg := regexp.MustCompile("^(\\s*)(第.{1,9}节)(.*)$")
+		result := reg.FindAllStringSubmatch(s,-1)
+		a := result[0][2]
+		return a
+	}
+
 	return ""
 }
 
-func getbookid(fp string) (bookid int,bookstorepath string){
-	db := dbcon
+func getchapterinfo(s string, fp string, lines int64) *chapterinfo {
+	c := chapterinfo{}
+	c.Bookid = getbookid(fp)
+	c.Chaptername = getchaptername(s)
+	c.Chapterlines = lines
+	return &c
+}
 
+func getchaptername(s string)( a string ){
+	isok , err := regexp.Match("^(\\s*)(第)(.{1,9})(章)(.*)",[]byte(s))
+	if err != nil {
+		fmt.Println(err)
+	}
+
+	if isok {
+		reg := regexp.MustCompile("^(\\s*)(第.{1,9}章)(.*)$")
+		result := reg.FindAllStringSubmatch(s,-1)
+		a = result[0][0]
+		//fmt.Println(a)
+		return a
+	}
+
+	isok1 , err := regexp.Match("^(\\s*)(\\d+)(\\s*)",[]byte(s))
+	if err != nil {
+		fmt.Println(err)
+	}
+
+	if isok1 {
+		reg := regexp.MustCompile("^(\\s*)(\\d+)(\\s*)")
+		result := reg.FindAllStringSubmatch(s,-1)
+		a = result[0][0]
+		//fmt.Println(a)
+		return a
+	}
+
+	isok2 , err := regexp.Match("^(\\s*)(卷.*)",[]byte(s))
+	if err != nil {
+		fmt.Println(err)
+	}
+
+	if isok2 {
+		reg := regexp.MustCompile("^(\\s*)(卷.*)")
+		result := reg.FindAllStringSubmatch(s,-1)
+		a = result[0][0]
+		//fmt.Println(a)
+		return a
+	}
+
+	isok2 , err = regexp.Match("^(\\s*)(第.{1,9}节)",[]byte(s))
+	if err != nil {
+		fmt.Println(err)
+	}
+
+	if isok2 {
+		reg := regexp.MustCompile("^(\\s*)(第.{1,9}节)(.*)")
+		result := reg.FindAllStringSubmatch(s,-1)
+		a = result[0][0]
+		//fmt.Println(a)
+		return a
+	}
+
+	return a
+}
+
+func getbookid(fp string) (bookid int) {
+	db := dbcon
 	bn := strings.Split(filepath.Base(fp), ".")
 	bookname := bn[2]
-
-	err := db.QueryRow("SELECT id FROM bookinfo WHERE bookname = ?", bookname).Scan(&bookid)
+	err := db.QueryRow("SELECT id FROM books WHERE booksName = ?", bookname).Scan(&bookid)
 	check(err)
-
-	err = db.QueryRow("SELECT bookstorepath FROM bookinfo WHERE bookname = ?", bookname).Scan(&bookstorepath)
-	check(err)
-
 	return
 }
 
-func (c *chapterinfo)writetodb()  {
+func (c *chapterinfo) writetodb() {
 	db := dbcon
-
-	stmt, err := db.Prepare(`INSERT chapter ( bookid, chaptername, chapter,storepath,chapterlines,chapterid) VALUES (?,?,?,?,?,?)`)
+	bookid := "chapter_" + strconv.Itoa(c.Bookid%100+1)
+	insertsql := fmt.Sprintf("INSERT %v ( booksId, chapterName, content,chapterlines,chapterId) VALUES (?,?,?,?,?)", bookid)
+	stmt, err := db.Prepare(insertsql)
 	check(err)
 
-	res, err := stmt.Exec(c.Bookid,c.Chaptername,c.Chapter,c.Storepath,c.Chapterlines,c.Chapterid)
+	res, err := stmt.Exec(c.Bookid, c.Chaptername, c.Chapter, c.Chapterlines, c.Chapterid)
 	check(err)
+	defer stmt.Close()
 
-	id, err := res.LastInsertId() //必须是自增id的才可以正确返回。
+	_, err = res.LastInsertId() //必须是自增id的才可以正确返回。
 	check(err)
-	idstr := fmt.Sprintf("%v", id)
-
-	fmt.Println(idstr)
 }
 
-func (c *chapterinfo)printcahpter()  {
-	fmt.Println(c.Chaptername,c.Chapterlines)
+func (c *chapterinfo) printcahpter() {
+	fmt.Println(c.Chaptername, c.Chapterlines)
 }
 
 func check(err error) {
@@ -174,7 +354,6 @@ func check(err error) {
 		panic(err)
 	}
 }
-
 
 func GetAllFile(pathname string, fn_ch chan string) {
 	rd, err := ioutil.ReadDir(pathname)
